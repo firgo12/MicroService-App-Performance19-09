@@ -1,6 +1,8 @@
 ﻿using Dapper;
 using Microsoft.AspNetCore.Mvc;
 using MySqlConnector;
+using Newtonsoft.Json;
+using StackExchange.Redis;
 using web_app_performance.Model;
 
 namespace web_app_performance.Controllers
@@ -9,17 +11,99 @@ namespace web_app_performance.Controllers
     [ApiController]
     public class UsuarioController : ControllerBase
     {
+        private static ConnectionMultiplexer redis;
 
         [HttpGet]
         public async Task<IActionResult> GetUsuario()
         {
+            string key = "getusuarios";
+            redis = ConnectionMultiplexer.Connect("localhost:6379");
+            IDatabase db = redis.GetDatabase();
+            await db.KeyExpireAsync(key, TimeSpan.FromSeconds(10));
+            string user = await db.StringGetAsync(key);
+
+            if (!string.IsNullOrEmpty(user)) 
+            {
+                return Ok(user);
+            }
+
+
             string connectionString = "Server=localhost;Database=sys;User=root;Password=123;";
             using var connection = new MySqlConnection(connectionString);
             await connection.OpenAsync();
             string query = "SELECT Id, Nome, Email FROM usuarios;";
             var usuarios = await connection.QueryAsync<Usuario>(query);
+            string usuariosJson = JsonConvert.SerializeObject(usuarios);
+            await db.StringSetAsync(key, usuariosJson);
 
             return Ok(usuarios);
+        }
+
+        [HttpPost]
+        public async Task<IActionResult> Post([FromBody] Usuario usuario)
+        {
+            string connectionString = "Server=localhost;Database=sys;User=root;Password=123;";
+            using var connection = new MySqlConnection(connectionString);
+            await connection.OpenAsync();
+
+
+            string sql = "INSERT INTO usuarios (Nome, email) VALUES (@nome, @email);";
+            await connection.ExecuteAsync(sql, usuario);
+
+            //apagar cache
+            string key = "getusuarios";
+            redis = ConnectionMultiplexer.Connect("localhost:6379");
+            IDatabase db = redis.GetDatabase();
+            await db.KeyDeleteAsync(key);
+
+
+            return Ok();
+        }
+
+        [HttpPut]
+        public async Task<IActionResult> Put([FromBody] Usuario usuario)
+        {
+            string connectionString = "Server=localhost;Database=sys;User=root;Password=123;";
+            using var connection = new MySqlConnection(connectionString);
+            await connection.OpenAsync();
+
+
+            string sql = @"UPDATE usuarios
+                            set Nome = @nome,
+	                            email = @email
+                            Where ID = @id";
+            await connection.ExecuteAsync(sql, usuario);
+
+            //apagar cache
+            string key = "getusuarios";
+            redis = ConnectionMultiplexer.Connect("localhost:6379");
+            IDatabase db = redis.GetDatabase();
+            await db.KeyDeleteAsync(key);
+
+
+            return Ok();
+        }
+
+        [HttpDelete("{id}")]
+        public async Task<IActionResult> Delete(int id)
+        {
+            string connectionString = "Server=localhost;Database=sys;User=root;Password=123;";
+            using var connection = new MySqlConnection(connectionString);
+            await connection.OpenAsync();
+
+
+            string sql = @"DELETE FROM usuarios
+                            Where ID = @id";
+            await connection.ExecuteAsync(sql, new { id });
+
+            //apagar cache
+            string key = "getusuarios";
+            redis = ConnectionMultiplexer.Connect("localhost:6379");
+            IDatabase db = redis.GetDatabase();
+            await db.KeyDeleteAsync(key);
+
+
+            return Ok();
         }
 
     }
